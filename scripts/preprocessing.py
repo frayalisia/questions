@@ -32,7 +32,7 @@ def transform(data, output, lemmas=False, drop_stop_words=False):
         transform_data, lemmas=False, drop_stop_words=False)
     data['question2'] = data['question2'].apply(
         transform_data, lemmas=False, drop_stop_words=False)
-    data.to_pickle('cleaned_table.pkl')
+    data.to_pickle(output)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
