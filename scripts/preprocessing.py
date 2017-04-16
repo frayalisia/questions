@@ -16,7 +16,7 @@ def lemmatize(tagged_token):
     token, tag = tagged_token
     return lemmatizer.lemmatize(token, pos=POS_TRANSFORM.get(tag, 'n'))
 
-def transform(data, output, lemmas=False, drop_stop_words=False):
+def transform_data(data, lemmas=False, drop_stop_words=False):
     clean_text = re.sub("[^\w]", ' ', data)
     clean_text = clean_text.lower().split()
 #   lemmatization    
@@ -26,6 +26,13 @@ def transform(data, output, lemmas=False, drop_stop_words=False):
     if drop_stop_words:
         clean_text = [word for word in clean_text if word not in stopwords.words('english')]
     return (' '.join(clean_text))
+
+def transform(data, output, lemmas=False, drop_stop_words=False):
+    data['question1'] = data['question1'].apply(
+        transform_data, lemmas=False, drop_stop_words=False)
+    data['question2'] = data['question2'].apply(
+        transform_data, lemmas=False, drop_stop_words=False)
+    data.to_pickle('cleaned_table.pkl')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
