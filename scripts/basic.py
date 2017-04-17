@@ -34,13 +34,42 @@ def diff_len_word(table):
     table['diff_len_word_abs'] = (sent1 - sent2).abs()
     table['diff_len_word_rel'] = table['diff_len_word_abs'] / pd.concat([sent1, sent2], axis=1).max(axis=1)
 
+def diff_unicode_jacard(row):
+    sent1 = row['question1']
+    sent2 = row['question2']
+    sent1 = set([ord(el) for el in sent1.replace(' ', '') if ord(el) > 256])
+    sent2 = set([ord(el) for el in sent2.replace(' ', '') if ord(el) > 256])
+    if len(sent1 | sent2):
+        return len(sent1 & sent2) / len(sent1 | sent2)
+    return np.nan
+
+def diff_unicode_abs(row):
+    sent1 = row['question1']
+    sent2 = row['question2']
+    sent1 = sum([ord(el) for el in sent1.replace(' ', '')])
+    sent2 = sum([ord(el) for el in sent2.replace(' ', '')])
+    return abs(sent1 - sent2)
+
+def diff_unicode_rel(row):
+    sent1 = row['question1']
+    sent2 = row['question2']
+    sent1 = sum([ord(el) for el in sent1.replace(' ', '')])
+    sent2 = sum([ord(el) for el in sent2.replace(' ', '')])
+    return abs(sent1 - sent2) / max(sent1, sent2)
+
 def transform(data, output):
     contain_str_digit(data)
     contain_str_mark(data)
     contain_str_math(data)
     diff_len_symb(data)
     diff_len_word(data)
-    result = data[['contain_questionmark', 'contain_math', 'contain_digit', 'diff_len_symb_abs', 'diff_len_symb_rel', 'diff_len_word_abs', 'diff_len_word_rel']]
+    data['diff_unicode_jacard'] = data.apply(diff_unicode_jacard, axis=1)
+    data['diff_unicode_abs'] = data.apply(diff_unicode_abs, axis=1)
+    data['diff_unicode_rel'] = data.apply(diff_unicode_rel, axis=1)
+    result = data[['contain_questionmark', 'contain_math', 'contain_digit',
+                   'diff_len_symb_abs', 'diff_len_symb_rel', 'diff_len_word_abs',
+                   'diff_len_word_rel', 'diff_unicode_jacard', 'diff_unicode_abs',
+                   'diff_unicode_rel']]
     result.to_pickle(output)
 
 if __name__ == '__main__':
