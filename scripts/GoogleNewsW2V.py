@@ -8,8 +8,8 @@ def fit(data):
 
 def w2v_sim(row):
     model = KeyedVectors.load_word2vec_format('GoogleNews-vectors-negative300.bin', binary=True)
-    sent1 = [w for w in row['question1'] if w in model.vocab]
-    sent2 = [w for w in row['question2'] if w in model.vocab]
+    sent1 = [w for w in row['question1'].split() if w in model.vocab]
+    sent2 = [w for w in row['question2'].split() if w in model.vocab]
     if sent1 and sent2:
         return model.n_similarity(sent1, sent2)
     return np.nan
