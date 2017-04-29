@@ -1,6 +1,7 @@
 import argparse
 import pickle
 import pandas as pd
+import string
 
 def fit(data):
     pass
@@ -57,6 +58,24 @@ def diff_unicode_rel(row):
     sent2 = sum([ord(el) for el in sent2.replace(' ', '')])
     return abs(sent1 - sent2) / max(sent1, sent2)
 
+def diff_jacard_minus(row):
+    sent1 = row['question1']
+    sent2 = row['question2']
+    punct = string.punctuation
+    
+    sent1 = set([el.strip(punct).lower() for el in sent1.split()])
+    sent2 = set([el.strip(punct).lower() for el in sent2.split()])
+    return len(sent1 - sent2) / len(sent1 | sent2)
+
+def diff_jacard(row):
+    sent1 = row['question1']
+    sent2 = row['question2']
+    punct = string.punctuation
+    
+    sent1 = set([el.strip(punct).lower() for el in sent1.split()])
+    sent2 = set([el.strip(punct).lower() for el in sent2.split()])
+    return len(sent1 & sent2) / len(sent1 | sent2)
+
 def transform(data, output):
     contain_str_digit(data)
     contain_str_mark(data)
@@ -66,6 +85,8 @@ def transform(data, output):
     data['diff_unicode_jacard'] = data.apply(diff_unicode_jacard, axis=1)
     data['diff_unicode_abs'] = data.apply(diff_unicode_abs, axis=1)
     data['diff_unicode_rel'] = data.apply(diff_unicode_rel, axis=1)
+    data['diff_jacard'] = data.apply(diff_jacard, axis=1)
+    data['diff_jacard_minus'] = data.apply(diff_jacard_minus, axis=1)
     result = data[['contain_questionmark', 'contain_math', 'contain_digit',
                    'diff_len_symb_abs', 'diff_len_symb_rel', 'diff_len_word_abs',
                    'diff_len_word_rel', 'diff_unicode_jacard', 'diff_unicode_abs',
