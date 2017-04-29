@@ -90,7 +90,7 @@ def transform(data, output):
     result = data[['contain_questionmark', 'contain_math', 'contain_digit',
                    'diff_len_symb_abs', 'diff_len_symb_rel', 'diff_len_word_abs',
                    'diff_len_word_rel', 'diff_unicode_jacard', 'diff_unicode_abs',
-                   'diff_unicode_rel']]
+                   'diff_unicode_rel', 'diff_jacard', 'diff_jacard_minus']]
     result.to_pickle(output)
 
 if __name__ == '__main__':
