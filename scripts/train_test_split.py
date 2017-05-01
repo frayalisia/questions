@@ -12,7 +12,7 @@ TARGET = 'is_duplicate'
 
 
 def train_test_split(data_file, n_splits, output_dir, random_state=None):
-    data = pd.read_csv(data_file, index_col=0)
+    data = pd.read_csv(data_file, index_col=0).dropna()
     # Create necessary folders.
     for fold in range(1, n_splits + 1):
         name = os.path.join(output_dir, 'f{}'.format(fold))
