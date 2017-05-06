@@ -136,7 +136,7 @@ class Jaccard(luigi.Task):
         features = {}
         if (s1 | s2):
             features['sim'] = len(s1 & s2) / len(s1 | s2)
-            features['diff'] = len(s1 - s2) / len(s1 | s2)
+            features['diff'] = min(len(s1 - s2), len(s2 - s1)) / len(s1 | s2)
         else:
             features['sim'] = np.nan
             features['diff'] = np.nan
