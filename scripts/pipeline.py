@@ -8,6 +8,8 @@ from nltk.stem import WordNetLemmatizer
 from nltk import pos_tag
 from nltk.corpus import stopwords
 
+import spacy
+from collections import defaultdict
 
 class CSVFile(luigi.ExternalTask):
     name = luigi.Parameter()
@@ -160,12 +162,74 @@ class Jaccard(luigi.Task):
         jaccard_features.to_pickle(self.output().path)
 
 
+class Spacy(luigi.Task):
+    sample = luigi.Parameter()
+    
+    nlp = spacy.load('en')
+    ent2group = {
+        'GPE' : 'LOC',
+        'LOC' : 'LOC',
+        'FACILITY' : 'LOC',
+
+        'PERSON' : 'PERSON',
+
+        'ORG' : 'ORG',
+
+        'PRODUCT' : 'OTHER',
+        'EVENT' : 'OTHER',
+        'WORK_OF_ART' : 'OTHER',
+        'LANGUAGE' : 'OTHER'
+    }
+
+    def set_features(self, s1, s2):
+        agree = (bool(s1) == bool(s2))
+        if (s1 | s2):
+            jac_sim = len(s1 & s2) / len(s1 | s2)
+        else:
+            jac_sim = np.nan
+        return agree, jac_sim
+    
+    def spacy_features(self, row):
+        features = {}
+        doc1 = self.nlp(row['question1'])
+        doc2 = self.nlp(row['question2'])
+
+        features['sim'] = doc1.similarity(doc2)
+
+        ent1 = defaultdict(set)
+        for el in doc1:
+            ent1[self.ent2group.get(el.ent_type_, 'NONE')].add(el.text)
+        ent2 = defaultdict(set)
+        for el in doc2:
+            ent2[self.ent2group.get(el.ent_type_, 'NONE')].add(el.text)
+
+        for group in ['LOC', 'PERSON', 'ORG', 'OTHER']:
+            agree, jac_sim = self.set_features(ent1[group], ent2[group])
+            features['agree_{}'.format(group)] = agree
+            features['jac_sim_{}'.format(group)] = jac_sim
+        return pd.Series(features)
+
+    def requires(self):
+        return CSVFile(self.sample)
+
+    def output(self):
+        return luigi.LocalTarget('{}_spacy.pkl'.format(self.sample))
+
+    def run(self):
+        sample_path = self.input().path
+        data = pd.read_csv(sample_path, index_col=0)
+        
+        spacy_features = data.apply(self.spacy_features, axis=1)
+        spacy_features.to_pickle(self.output().path)
+
+
 class CollectFeatures(luigi.Task):
     sample = luigi.Parameter()
 
     def requires(self):
         return {
             'RAW' : RawFeatures(sample=self.sample),
+            'SPACY' : Spacy(sample=self.sample),
             'JAC' : Jaccard(sample=self.sample, lemmas=True, drop_stop_words=True)
         }, CSVFile(name=self.sample)
 
