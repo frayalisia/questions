@@ -1,6 +1,4 @@
-from collections import defaultdict
 import os
-import pickle
 import re
 
 import luigi
@@ -9,9 +7,6 @@ import pandas as pd
 from nltk.stem import WordNetLemmatizer
 from nltk import pos_tag
 from nltk.corpus import stopwords
-from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
-from sklearn.metrics.pairwise import paired_distances
-import spacy
 
 
 class CSVFile(luigi.ExternalTask):
@@ -165,142 +160,13 @@ class Jaccard(luigi.Task):
         jaccard_features.to_pickle(self.output().path)
 
 
-class BagOfWordsModel(luigi.Task):
-    corpus = luigi.Parameter()
-    tf_idf = luigi.BoolParameter()
-    max_features = luigi.Parameter(default=None)
-
-    def requires(self):
-        return Preprocess(sample=self.corpus, lemmas=True, drop_stop_words=True)
-
-    def output(self):
-        postfix = '_bow_model'
-        if self.tf_idf:
-            postfix += '_tfidf'
-        if self.max_features is not None:
-            postfix += '_{}'.format(self.max_features)
-        return luigi.LocalTarget('{0}{1}.pkl'.format(self.corpus, postfix))
-
-    def run(self):
-        data = pd.read_pickle(self.input().path)
-        corpus = pd.concat([data['question1'], data['question2']])
-
-        if self.max_features is not None:
-            self.max_features = int(self.max_features)
-        params = {'analyzer' : str.split, 'max_features' : self.max_features}
-
-        if self.tf_idf:
-            vectorizer = TfidfVectorizer(**params)
-        else:
-            vectorizer = CountVectorizer(**params)
-
-        model = vectorizer.fit(corpus)
-        with open(self.output().path, 'wb') as outfile:
-            pickle.dump(model, outfile)
-
-
-class BagOfWordsFeatures(luigi.Task):
-    sample = luigi.Parameter()
-    tf_idf = luigi.BoolParameter()
-    max_features = luigi.Parameter(default=None)
-
-    def get_cosine_similarities(self, model, data):
-        question1 = model.transform(data['question1'])
-        question2 = model.transform(data['question2'])
-        return 1.0 - paired_distances(question1, question2, metric='cosine')
-
-    def requires(self):
-        return [BagOfWordsModel(tf_idf=self.tf_idf, max_features=self.max_features),
-                Preprocess(sample=self.sample, lemmas=True, drop_stop_words=True)]
-
-    def output(self):
-        postfix = '_bow'
-        if self.tf_idf:
-            postfix += '_tfidf'
-        if self.max_features is not None:
-            postfix += '_{}'.format(self.max_features)
-        return luigi.LocalTarget('{0}{1}.pkl'.format(self.sample, postfix))
-
-    def run(self):
-        model_file, data_file = self.input()
-        model = pd.read_pickle(model_file.path)
-        data = pd.read_pickle(data_file.path)
-        cosines = self.get_cosine_similarities(model, data)
-        features = pd.DataFrame(data=cosines, index=data.index, columns=['sim'])
-        features.to_pickle(self.output().path)
-
-
-class Spacy(luigi.Task):
-    sample = luigi.Parameter()
-    
-    nlp = spacy.load('en')
-    ent2group = {
-        'GPE' : 'LOC',
-        'LOC' : 'LOC',
-        'FACILITY' : 'LOC',
-
-        'PERSON' : 'PERSON',
-
-        'ORG' : 'ORG',
-
-        'PRODUCT' : 'OTHER',
-        'EVENT' : 'OTHER',
-        'WORK_OF_ART' : 'OTHER',
-        'LANGUAGE' : 'OTHER'
-    }
-
-    def set_features(self, s1, s2):
-        agree = (bool(s1) == bool(s2))
-        if (s1 | s2):
-            jac_sim = len(s1 & s2) / len(s1 | s2)
-        else:
-            jac_sim = np.nan
-        return agree, jac_sim
-    
-    def spacy_features(self, row):
-        features = {}
-        doc1 = self.nlp(row['question1'])
-        doc2 = self.nlp(row['question2'])
-
-        features['sim'] = doc1.similarity(doc2)
-
-        ent1 = defaultdict(set)
-        for el in doc1:
-            ent1[self.ent2group.get(el.ent_type_, 'NONE')].add(el.text)
-        ent2 = defaultdict(set)
-        for el in doc2:
-            ent2[self.ent2group.get(el.ent_type_, 'NONE')].add(el.text)
-
-        for group in ['LOC', 'PERSON', 'ORG', 'OTHER']:
-            agree, jac_sim = self.set_features(ent1[group], ent2[group])
-            features['agree_{}'.format(group)] = agree
-            features['jac_sim_{}'.format(group)] = jac_sim
-        return pd.Series(features)
-
-    def requires(self):
-        return CSVFile(self.sample)
-
-    def output(self):
-        return luigi.LocalTarget('{}_spacy.pkl'.format(self.sample))
-
-    def run(self):
-        sample_path = self.input().path
-        data = pd.read_csv(sample_path, index_col=0)
-        
-        spacy_features = data.apply(self.spacy_features, axis=1)
-        spacy_features.to_pickle(self.output().path)
-
-
 class CollectFeatures(luigi.Task):
     sample = luigi.Parameter()
 
     def requires(self):
         return {
             'RAW' : RawFeatures(sample=self.sample),
-            'JAC' : Jaccard(sample=self.sample, lemmas=True, drop_stop_words=True),
-            'SPACY' : Spacy(sample=self.sample),
-            'BOW_COUNT' : BagOfWordsFeatures(sample=self.sample),
-            'BOW_TFIDF' : BagOfWordsFeatures(sample=self.sample, tf_idf=True)
+            'JAC' : Jaccard(sample=self.sample, lemmas=True, drop_stop_words=True)
         }, CSVFile(name=self.sample)
 
     def output(self):

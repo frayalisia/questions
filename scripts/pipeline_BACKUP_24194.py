@@ -1,4 +1,3 @@
-from collections import defaultdict
 import os
 import pickle
 import re
@@ -11,8 +10,9 @@ from nltk import pos_tag
 from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.metrics.pairwise import paired_distances
-import spacy
 
+import spacy
+from collections import defaultdict
 
 class CSVFile(luigi.ExternalTask):
     name = luigi.Parameter()
@@ -165,6 +165,7 @@ class Jaccard(luigi.Task):
         jaccard_features.to_pickle(self.output().path)
 
 
+<<<<<<< HEAD
 class BagOfWordsModel(luigi.Task):
     corpus = luigi.Parameter()
     tf_idf = luigi.BoolParameter()
@@ -228,8 +229,7 @@ class BagOfWordsFeatures(luigi.Task):
         cosines = self.get_cosine_similarities(model, data)
         features = pd.DataFrame(data=cosines, index=data.index, columns=['sim'])
         features.to_pickle(self.output().path)
-
-
+=======
 class Spacy(luigi.Task):
     sample = luigi.Parameter()
     
@@ -289,6 +289,7 @@ class Spacy(luigi.Task):
         
         spacy_features = data.apply(self.spacy_features, axis=1)
         spacy_features.to_pickle(self.output().path)
+>>>>>>> 948dc973caa3cd13128ad8d9747f3778fa74e82f
 
 
 class CollectFeatures(luigi.Task):
@@ -297,10 +298,14 @@ class CollectFeatures(luigi.Task):
     def requires(self):
         return {
             'RAW' : RawFeatures(sample=self.sample),
+<<<<<<< HEAD
             'JAC' : Jaccard(sample=self.sample, lemmas=True, drop_stop_words=True),
-            'SPACY' : Spacy(sample=self.sample),
             'BOW_COUNT' : BagOfWordsFeatures(sample=self.sample),
             'BOW_TFIDF' : BagOfWordsFeatures(sample=self.sample, tf_idf=True)
+=======
+            'SPACY' : Spacy(sample=self.sample),
+            'JAC' : Jaccard(sample=self.sample, lemmas=True, drop_stop_words=True)
+>>>>>>> 948dc973caa3cd13128ad8d9747f3778fa74e82f
         }, CSVFile(name=self.sample)
 
     def output(self):
