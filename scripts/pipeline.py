@@ -69,6 +69,8 @@ class Preprocess(luigi.Task):
 class RawFeatures(luigi.Task):
     sample = luigi.Parameter()
 
+    stops = set(stopwords.words('english'))
+    
     def agree(self, data, regex):
         s1 = data['question1'].str.contains(regex)
         s2 = data['question2'].str.contains(regex)
@@ -105,7 +107,47 @@ class RawFeatures(luigi.Task):
 
         return pd.Series(features)
 
+    def get_hamming_features(self, row):
+        s1 = row['question1'].split()
+        s2 = row['question2'].split()
+        
+        features = {}
+        features['ham'] = sum(1 for i in zip(s1, s2) if i[0]==i[1]) / max(len(s1), len(s2))
+        features['ham_ints'] = sum(1 for i in zip(s1, s2) if i[0]==i[1]) / len(set(s1) | set(s2))
+        return pd.Series(features)
 
+    def get_avg_features(self, data):
+        s1_symb = data['question1'].str.len()
+        s2_symb = data['question2'].str.len()
+        s1_word = data['question1'].str.split().str.len()
+        s2_word = data['question2'].str.split().str.len()
+    
+        avg_word_q1 = s1_symb / s1_word
+        avg_word_q2 = s2_symb / s2_word
+        avg_word_diff = (avg_word_q1 - avg_word_q2).abs()
+        avg_word_mean = (avg_word_q1 + avg_word_q2) / 2
+        return avg_word_q1, avg_word_q2, avg_word_diff, avg_word_mean
+
+    def get_stop_ratio(self, row):
+        s1 = set(str(row['question1']).lower().split())
+        s2 = set(str(row['question2']).lower().split())
+    
+        s1words = s1.difference(self.stops)
+        s2words = s2.difference(self.stops)
+
+        s1stops = s1.intersection(self.stops)
+        s2stops = s2.intersection(self.stops)
+    
+        features = {}
+        if len(s2words) == 0:
+            features['stops_s2'] = np.nan
+        if len(s1words) == 0:
+            features['stops_s1'] = np.nan
+        else:
+            features['stops_s1'] = len(s1stops) / len(s1words) 
+            features['stops_s2'] = len(s2stops) / len(s2words) 
+        return pd.Series(features)
+    
     def requires(self):
         return CSVFile(self.sample)
 
@@ -115,20 +157,24 @@ class RawFeatures(luigi.Task):
     def run(self):
         sample_path = self.input().path
         data = pd.read_csv(sample_path, index_col=0)
-        data['agree_qmark'] = self.agree(data, '\?')
-        data['agree_digit'] = self.agree(data, '\d+')
-        data['agree_math'] = self.agree(data, '\[math\]')
-        data['contain_math'] = self.contain(data, '\[math\]')
-        data['diff_len_symb_abs'], data['diff_len_symb_rel'] = self.len_diff(data, 'symbol')
-        data['diff_len_word_abs'], data['diff_len_word_rel'] = self.len_diff(data, 'word')
+        features = pd.DataFrame(index=data.index)
+        features['agree_qmark'] = self.agree(data, '\?')
+        features['agree_digit'] = self.agree(data, '\d+')
+        features['agree_math'] = self.agree(data, '\[math\]')
+        features['contain_math'] = self.contain(data, '\[math\]')
+        for el in ['how', 'what', 'which', 'who', 'whom', 'where', 'when', 'why']:
+            features['agree_{}'.format(el)] = self.agree(data, el)
+            features['contain_{}'.format(el)] = self.contain(data, el)
+        features['diff_len_symb_abs'], features['diff_len_symb_rel'] = self.len_diff(data, 'symbol')
+        features['diff_len_word_abs'], features['diff_len_word_rel'] = self.len_diff(data, 'word')
+        features['avg_word_q1'], features['avg_word_q2'], features['avg_word_diff'], features['avg_word_mean'] = self.get_avg_features(data)
 
         unicode_features = data.apply(self.get_unicode_features, axis=1)
+        hamming_features = data.apply(self.get_hamming_features, axis=1)
+        stops_features = data.apply(self.get_stop_ratio, axis=1)
 
-        result = data[['agree_qmark', 'agree_digit', 'agree_math', 'contain_math',
-                       'diff_len_symb_abs', 'diff_len_symb_rel',
-                       'diff_len_word_abs', 'diff_len_word_rel']]
-        result = pd.concat([result, unicode_features], axis=1)
-        result.to_pickle(self.output().path)
+        features = pd.concat([features, unicode_features, hamming_features, stops_features], axis=1)
+        features.to_pickle(self.output().path)
 
 
 class Jaccard(luigi.Task):
