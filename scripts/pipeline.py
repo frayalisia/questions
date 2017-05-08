@@ -6,6 +6,8 @@ import re
 import luigi
 import numpy as np
 import pandas as pd
+from gensim.models import word2vec
+from gensim.models.keyedvectors import KeyedVectors
 from nltk.stem import WordNetLemmatizer
 from nltk import pos_tag
 from nltk.corpus import stopwords
@@ -291,6 +293,53 @@ class Spacy(luigi.Task):
         spacy_features.to_pickle(self.output().path)
 
 
+class Word2VecModel(luigi.Task):
+    corpus = luigi.Parameter()
+
+    def requires(self):
+        return Preprocess(sample=self.corpus, lemmas=True, drop_stop_words=True)
+
+    def output(self):
+        postfix = '_w2v_model'
+        return luigi.LocalTarget('{0}{1}.bin'.format(self.corpus, postfix))
+
+    def run(self):
+        data = pd.read_pickle(self.input().path)
+        corpus = (data['question1'].str.split().tolist() +
+                  data['question2'].str.split().tolist())
+        model = word2vec.Word2Vec(corpus, size=300, window=20, min_count=2, workers=16)
+        model.wv.save_word2vec_format(self.output().path, binary=True)
+
+
+class Word2VecFeatures(luigi.Task):
+    corpus = luigi.Parameter()
+    sample = luigi.Parameter()
+
+    def get_similarity(self, row, model=None):
+        s1 = [w for w in row['question1'].split() if w in model.vocab]
+        s2 = [w for w in row['question2'].split() if w in model.vocab]
+        if (s1 and s2):
+            return model.n_similarity(s1, s2)
+        return np.nan
+
+    def requires(self):
+        return [Word2VecModel(corpus=self.corpus),
+                Preprocess(sample=self.sample, lemmas=True, drop_stop_words=True)]
+
+    def output(self):
+        postfix = '_w2v'
+        postfix += '_' + os.path.basename(self.corpus)
+        return luigi.LocalTarget('{0}{1}.pkl'.format(self.sample, postfix))
+
+    def run(self):
+        model_file, data_file = self.input()
+        model = KeyedVectors.load_word2vec_format(model_file.path, binary=True)
+        data = pd.read_pickle(data_file.path)
+        cosines = data.apply(self.get_similarity, model=model, axis=1)
+        features = pd.DataFrame(data=cosines, index=data.index, columns=['sim'])
+        features.to_pickle(self.output().path)
+
+
 class CollectFeatures(luigi.Task):
     sample = luigi.Parameter()
 
@@ -300,7 +349,9 @@ class CollectFeatures(luigi.Task):
             'JAC' : Jaccard(sample=self.sample, lemmas=True, drop_stop_words=True),
             'SPACY' : Spacy(sample=self.sample),
             'BOW_COUNT' : BagOfWordsFeatures(sample=self.sample),
-            'BOW_TFIDF' : BagOfWordsFeatures(sample=self.sample, tf_idf=True)
+            'BOW_TFIDF' : BagOfWordsFeatures(sample=self.sample, tf_idf=True),
+            'W2V_CORPUS' : Word2VecFeatures(sample=self.sample, corpus='./nlp_models/corpus'),
+            'W2V_GOOGLE' : Word2VecFeatures(sample=self.sample, corpus='./nlp_models/google_news')
         }, CSVFile(name=self.sample)
 
     def output(self):
