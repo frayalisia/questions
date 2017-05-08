@@ -6,11 +6,13 @@ import re
 import luigi
 import numpy as np
 import pandas as pd
+from gensim.matutils import unitvec
 from gensim.models import word2vec
 from gensim.models.keyedvectors import KeyedVectors
 from nltk.stem import WordNetLemmatizer
 from nltk import pos_tag
 from nltk.corpus import stopwords
+from scipy.spatial.distance import cdist
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.metrics.pairwise import paired_distances
 import spacy
@@ -356,15 +358,40 @@ class Word2VecFeatures(luigi.Task):
     corpus = luigi.Parameter()
     sample = luigi.Parameter()
 
-    def get_similarity(self, row, model=None):
+    def get_features(self, row, model=None, vectorizer=None):
         s1 = [w for w in row['question1'].split() if w in model.vocab]
         s2 = [w for w in row['question2'].split() if w in model.vocab]
-        if (s1 and s2):
-            return model.n_similarity(s1, s2)
-        return np.nan
+
+        features = {}
+        if not (s1 and s2):
+            features['sim'] = np.nan
+            features['tfidf_sim'] = np.nan
+            features['min_dist'] = np.nan
+            features['max_dist'] = np.nan
+            features['mean_dist'] = np.nan
+            features['std_dist'] = np.nan
+        else:
+            # similarity
+            features['sim'] = model.n_similarity(s1, s2)
+            # tfidf similarity
+            ids1 = [vectorizer.vocabulary_[w] for w in s1]
+            ids2 = [vectorizer.vocabulary_[w] for w in s2]
+            tf_idfs1 = vectorizer.transform([row['question1']])[:, ids1].toarray().flatten()
+            tf_idfs2 = vectorizer.transform([row['question2']])[:, ids2].toarray().flatten()
+            vecs1 = model[s1]
+            vecs2 = model[s2]
+            features['tfidf_sim'] = unitvec(tf_idfs1 @ vecs1) @ unitvec(tf_idfs2 @ vecs2)
+            # distances
+            dist_matrix = cdist(vecs1, vecs2, metric='cosine')
+            features['min_dist'] = dist_matrix.min()
+            features['max_dist'] = dist_matrix.max()
+            features['mean_dist'] = dist_matrix.mean()
+            features['std_dist'] = dist_matrix.std()
+        return pd.Series(features)
 
     def requires(self):
         return [Word2VecModel(corpus=self.corpus),
+                BagOfWordsModel(corpus=self.corpus, tf_idf=True),
                 Preprocess(sample=self.sample, lemmas=True, drop_stop_words=True)]
 
     def output(self):
@@ -373,11 +400,11 @@ class Word2VecFeatures(luigi.Task):
         return luigi.LocalTarget('{0}{1}.pkl'.format(self.sample, postfix))
 
     def run(self):
-        model_file, data_file = self.input()
+        model_file, vectorizer_file, data_file = self.input()
         model = KeyedVectors.load_word2vec_format(model_file.path, binary=True)
+        vectorizer = pd.read_pickle(vectorizer_file.path)
         data = pd.read_pickle(data_file.path)
-        cosines = data.apply(self.get_similarity, model=model, axis=1)
-        features = pd.DataFrame(data=cosines, index=data.index, columns=['sim'])
+        features = data.apply(self.get_features, model=model, vectorizer=vectorizer, axis=1)
         features.to_pickle(self.output().path)
 
 
@@ -391,8 +418,7 @@ class CollectFeatures(luigi.Task):
             'SPACY' : Spacy(sample=self.sample),
             'BOW_COUNT' : BagOfWordsFeatures(sample=self.sample),
             'BOW_TFIDF' : BagOfWordsFeatures(sample=self.sample, tf_idf=True),
-            'W2V_CORPUS' : Word2VecFeatures(sample=self.sample, corpus='./nlp_models/corpus'),
-            'W2V_GOOGLE' : Word2VecFeatures(sample=self.sample, corpus='./nlp_models/google_news')
+            'W2V_CORPUS' : Word2VecFeatures(sample=self.sample, corpus='./nlp_models/corpus')
         }, CSVFile(name=self.sample)
 
     def output(self):
