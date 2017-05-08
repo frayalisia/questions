@@ -139,13 +139,8 @@ class RawFeatures(luigi.Task):
         s2stops = s2.intersection(self.stops)
     
         features = {}
-        if len(s2words) == 0:
-            features['stops_s2'] = np.nan
-        if len(s1words) == 0:
-            features['stops_s1'] = np.nan
-        else:
-            features['stops_s1'] = len(s1stops) / len(s1words) 
-            features['stops_s2'] = len(s2stops) / len(s2words) 
+        features['stops_s1'] = len(s1stops) / len(s1words) if s1words else np.nan
+        features['stops_s2'] = len(s2stops) / len(s2words) if s2words else np.nan
         return pd.Series(features)
     
     def requires(self):
