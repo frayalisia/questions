@@ -74,6 +74,7 @@ class RawFeatures(luigi.Task):
     sample = luigi.Parameter()
 
     stops = set(stopwords.words('english'))
+    geo = pickle.load(open("regex_geo.pickle", "rb"))
     
     def agree(self, data, regex):
         s1 = data['question1'].str.contains(regex)
@@ -146,6 +147,17 @@ class RawFeatures(luigi.Task):
         features['stops_s1'] = len(s1stops) / len(s1words) if s1words else np.nan
         features['stops_s2'] = len(s2stops) / len(s2words) if s2words else np.nan
         return pd.Series(features)
+
+    def get_regex_geo(self, row):
+        s1 = set(self.geo.findall(row['question1'].lower()))
+        s2 = set(self.geo.findall(row['question2'].lower()))
+    
+        features = {}
+        features['loc_jaccard'] = len(s1 & s2) / len(s1 | s2) if (s1 | s2) else np.nan
+        features['loc_agree'] = (s1 == s2)
+        features['loc_min'] = min(len(s1), len(s2))
+        features['loc_max'] = max(len(s1), len(s2))
+        return pd.Series(features)
     
     def requires(self):
         return CSVFile(self.sample)
@@ -172,7 +184,9 @@ class RawFeatures(luigi.Task):
         hamming_features = data.apply(self.get_hamming_features, axis=1)
         stops_features = data.apply(self.get_stop_ratio, axis=1)
 
-        features = pd.concat([features, unicode_features, hamming_features, stops_features], axis=1)
+        loc_features = data.apply(self.get_regex_geo, axis=1)
+
+        features = pd.concat([features, unicode_features, hamming_features, stops_features, loc_features], axis=1)
         features.to_pickle(self.output().path)
 
 
