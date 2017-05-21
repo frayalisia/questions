@@ -166,7 +166,7 @@ class RawFeatures(luigi.Task):
         return CSVFile(self.sample)
 
     def output(self):
-        return luigi.LocalTarget('{}_basic.pkl'.format(self.sample))
+        return luigi.LocalTarget('{}_raw.pkl'.format(self.sample))
 
     def run(self):
         sample_path = self.input().path
