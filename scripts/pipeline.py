@@ -126,12 +126,14 @@ class RawFeatures(luigi.Task):
         s2_symb = data['question2'].str.len()
         s1_word = data['question1'].str.split().str.len()
         s2_word = data['question2'].str.split().str.len()
-    
-        avg_word_q1 = s1_symb / s1_word
-        avg_word_q2 = s2_symb / s2_word
-        avg_word_diff = (avg_word_q1 - avg_word_q2).abs()
-        avg_word_mean = (avg_word_q1 + avg_word_q2) / 2
-        return avg_word_q1, avg_word_q2, avg_word_diff, avg_word_mean
+
+        s1_avg_word = s1_symb / s1_word
+        s2_avg_word = s2_symb / s2_word
+        avg_word_min = np.minimum(s1_avg_word, s2_avg_word)
+        avg_word_max = np.maximum(s1_avg_word, s2_avg_word)
+        avg_word_diff = avg_word_max - avg_word_min
+        avg_word_mean = (avg_word_min + avg_word_max) / 2
+        return avg_word_min, avg_word_max, avg_word_diff, avg_word_mean
 
     def get_stop_ratio(self, row):
         s1 = set(str(row['question1']).lower().split())
@@ -144,8 +146,9 @@ class RawFeatures(luigi.Task):
         s2stops = s2.intersection(self.stops)
     
         features = {}
-        features['stops_s1'] = len(s1stops) / len(s1words) if s1words else np.nan
-        features['stops_s2'] = len(s2stops) / len(s2words) if s2words else np.nan
+        stops_s1 = len(s1stops) / len(s1words) if s1words else np.nan
+        stops_s2 = len(s2stops) / len(s2words) if s2words else np.nan
+        features['stops_min'], features['stops_max'] = np.sort([stops_s1, stops_s2])
         return pd.Series(features)
 
     def get_loc_features(self, row, loc_regex=None):
@@ -178,7 +181,7 @@ class RawFeatures(luigi.Task):
             features['contain_{}'.format(el)] = self.contain(data, el)
         features['diff_len_symb_abs'], features['diff_len_symb_rel'] = self.len_diff(data, 'symbol')
         features['diff_len_word_abs'], features['diff_len_word_rel'] = self.len_diff(data, 'word')
-        features['avg_word_q1'], features['avg_word_q2'], features['avg_word_diff'], features['avg_word_mean'] = self.get_avg_features(data)
+        features['avg_word_min'], features['avg_word_max'], features['avg_word_diff'], features['avg_word_mean'] = self.get_avg_features(data)
 
         unicode_features = data.apply(self.get_unicode_features, axis=1)
         hamming_features = data.apply(self.get_hamming_features, axis=1)
