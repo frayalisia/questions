@@ -6,8 +6,10 @@ import re
 import luigi
 import numpy as np
 import pandas as pd
+from gensim import corpora
 from gensim.matutils import unitvec
 from gensim.models import word2vec
+from gensim.models import LdaMulticore as GensimLdaModel
 from gensim.models.keyedvectors import KeyedVectors
 from nltk.stem import WordNetLemmatizer
 from nltk import pos_tag
@@ -408,6 +410,71 @@ class Word2VecFeatures(luigi.Task):
         features.to_pickle(self.output().path)
 
 
+class LdaModel(luigi.Task):
+    corpus = luigi.Parameter()
+    num_topics = luigi.IntParameter(default=10)
+    passes = luigi.IntParameter(default=10)
+
+    def requires(self):
+        return Preprocess(sample=self.corpus, lemmas=True, drop_stop_words=True)
+
+    def output(self):
+        postfix = '_lda_model_{0}_{1}'.format(self.num_topics, self.passes)
+        return [luigi.LocalTarget('{0}{1}.bin'.format(self.corpus, postfix)),
+                luigi.LocalTarget('{0}{1}_dict.bin'.format(self.corpus, postfix))]
+
+    def run(self):
+        data = pd.read_pickle(self.input().path)
+        sentences = (data['question1'].str.split().tolist() +
+                     data['question2'].str.split().tolist())
+        dictionary = corpora.Dictionary(sentences)
+        corpus = list(map(dictionary.doc2bow, sentences))
+        lda = GensimLdaModel(corpus, num_topics=self.num_topics, id2word=dictionary,
+                             chunksize=1000, passes=self.passes,
+                             minimum_probability=-1.0)
+        lda_file, dictionary_file = self.output()
+        lda.save(lda_file.path)
+        dictionary.save(dictionary_file.path)
+
+
+class LdaFeatures(luigi.Task):
+    corpus = luigi.Parameter()
+    num_topics = luigi.IntParameter(default=10)
+    passes = luigi.IntParameter(default=1)
+    sample = luigi.Parameter()
+
+    def get_features(self, row, model=None, dictionary=None):
+        s1 = row['question1'].split()
+        s2 = row['question2'].split()
+
+        prob1 = np.array(model.get_document_topics(dictionary.doc2bow(s1)))[:, 1]
+        prob2 = np.array(model.get_document_topics(dictionary.doc2bow(s2)))[:, 1]
+
+        features = {}
+        features['same_top_topic'] = (prob1.argmax() == prob2.argmax())
+        features['same_topic_prob'] = prob1 @ prob2
+        features['kullback_leibler'] = (prob1 - prob2) @ (np.log(prob1) - np.log(prob2))
+
+        return pd.Series(features)
+
+
+    def requires(self):
+        return [LdaModel(corpus=self.corpus, num_topics=self.num_topics, passes=self.passes),
+                Preprocess(sample=self.sample, lemmas=True, drop_stop_words=True)]
+
+    def output(self):
+        postfix= '_lda_{0}_{1}'.format(self.num_topics, self.passes)
+        return luigi.LocalTarget('{0}{1}.pkl'.format(self.sample, postfix))
+
+    def run(self):
+        (model_file, dictionary_file), data_file = self.input()
+        model = GensimLdaModel.load(model_file.path)
+        dictionary = corpora.Dictionary.load(dictionary_file.path)
+        data = pd.read_pickle(data_file.path)
+        features = data.apply(self.get_features, model=model, dictionary=dictionary, axis=1)
+        features.to_pickle(self.output().path)
+
+
 class CollectFeatures(luigi.Task):
     sample = luigi.Parameter()
 
@@ -418,7 +485,10 @@ class CollectFeatures(luigi.Task):
             'SPACY' : Spacy(sample=self.sample),
             'BOW_COUNT' : BagOfWordsFeatures(sample=self.sample),
             'BOW_TFIDF' : BagOfWordsFeatures(sample=self.sample, tf_idf=True),
-            'W2V_CORPUS' : Word2VecFeatures(sample=self.sample, corpus='./nlp_models/corpus')
+            'W2V_CORPUS' : Word2VecFeatures(sample=self.sample, corpus='./nlp_models/corpus'),
+            'LDA10' : LdaFeatures(sample=self.sample, corpus='./nlp_models/corpus', num_topics=10),
+            'LDA100' : LdaFeatures(sample=self.sample, corpus='./nlp_models/corpus', num_topics=100),
+            'LDA500' : LdaFeatures(sample=self.sample, corpus='./nlp_models/corpus', num_topics=500, passes=10)
         }, CSVFile(name=self.sample)
 
     def output(self):
