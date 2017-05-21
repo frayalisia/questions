@@ -263,6 +263,7 @@ class BagOfWordsModel(luigi.Task):
 
 
 class BagOfWordsFeatures(luigi.Task):
+    corpus = luigi.Parameter()
     sample = luigi.Parameter()
     tf_idf = luigi.BoolParameter()
     max_features = luigi.Parameter(default=None)
@@ -273,7 +274,7 @@ class BagOfWordsFeatures(luigi.Task):
         return 1.0 - paired_distances(question1, question2, metric='cosine')
 
     def requires(self):
-        return [BagOfWordsModel(tf_idf=self.tf_idf, max_features=self.max_features),
+        return [BagOfWordsModel(corpus=self.corpus, tf_idf=self.tf_idf, max_features=self.max_features),
                 Preprocess(sample=self.sample, lemmas=True, drop_stop_words=True)]
 
     def output(self):
@@ -499,8 +500,8 @@ class CollectFeatures(luigi.Task):
             'RAW' : RawFeatures(sample=self.sample),
             'JAC' : Jaccard(sample=self.sample, lemmas=True, drop_stop_words=True),
             'SPACY' : Spacy(sample=self.sample),
-            'BOW_COUNT' : BagOfWordsFeatures(sample=self.sample),
-            'BOW_TFIDF' : BagOfWordsFeatures(sample=self.sample, tf_idf=True),
+            'BOW_COUNT' : BagOfWordsFeatures(sample=self.sample, corpus='./nlp_models/corpus'),
+            'BOW_TFIDF' : BagOfWordsFeatures(sample=self.sample, tf_idf=True, corpus='./nlp_models/corpus'),
             'W2V_CORPUS' : Word2VecFeatures(sample=self.sample, corpus='./nlp_models/corpus'),
             'LDA10' : LdaFeatures(sample=self.sample, corpus='./nlp_models/corpus', num_topics=10),
             'LDA100' : LdaFeatures(sample=self.sample, corpus='./nlp_models/corpus', num_topics=100),
