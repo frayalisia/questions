@@ -19,6 +19,7 @@ from scipy.spatial.distance import cdist
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.metrics.pairwise import paired_distances
 import spacy
+from fuzzywuzzy import fuzz as fz
 
 
 class CSVFile(luigi.ExternalTask):
@@ -151,6 +152,20 @@ class RawFeatures(luigi.Task):
         features['stops_min'], features['stops_max'] = np.sort([stops_s1, stops_s2])
         return pd.Series(features)
 
+    def get_fuzzy_features(self, row):
+        s1 = row['question1']
+        s2 = row['question2']
+        
+        features = {}
+        features['simple_ratio'] = fz.ratio(s1, s2)
+        features['partial_ratio'] = fz.partial_ratio(s1, s2)
+        features['part_tok_set_ratio'] = fz.partial_token_set_ratio(s1, s2)
+        features['part_tok_sort_ratio'] = fz.partial_token_sort_ratio(s1, s2)
+        features['tok_sort_ratio'] = fz.token_sort_ratio(s1, s2)
+        features['tok_set_ratio'] = fz.token_set_ratio(s1, s2)
+        features['Wratio'] = fz.WRatio(s1, s2)
+        return pd.Series(features)
+
     def get_loc_features(self, row, loc_regex=None):
         s1 = set(loc_regex.findall(row['question1'].lower()))
         s2 = set(loc_regex.findall(row['question2'].lower()))
@@ -186,12 +201,13 @@ class RawFeatures(luigi.Task):
         unicode_features = data.apply(self.get_unicode_features, axis=1)
         hamming_features = data.apply(self.get_hamming_features, axis=1)
         stops_features = data.apply(self.get_stop_ratio, axis=1)
+        fuzzy_features = data.apply(self.get_fuzzy_features, axis=1)
 
         with open(os.path.join(sys.path[0], 'regex_geo.pickle'), 'rb') as infile:
             loc_regex = pickle.load(infile)
         loc_features = data.apply(self.get_loc_features, axis=1, loc_regex=loc_regex)
 
-        features = pd.concat([features, unicode_features, hamming_features, stops_features, loc_features], axis=1)
+        features = pd.concat([features, unicode_features, hamming_features, stops_features, fuzzy_features, loc_features], axis=1)
         features.to_pickle(self.output().path)
 
 
