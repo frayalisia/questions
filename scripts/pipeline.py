@@ -411,6 +411,8 @@ class Word2VecFeatures(luigi.Task):
         else:
             # similarity
             features['sim'] = model.n_similarity(s1, s2)
+            # wm_distance
+            features['wm_dist'] = model.wmdistance(s1, s2)
             # tfidf similarity
             ids1 = [vectorizer.vocabulary_[w] for w in s1]
             ids2 = [vectorizer.vocabulary_[w] for w in s2]
