@@ -3,6 +3,7 @@ import os
 import pickle
 import re
 import sys
+import tempfile
 
 import luigi
 import numpy as np
@@ -16,8 +17,10 @@ from nltk.stem import WordNetLemmatizer
 from nltk import pos_tag
 from nltk.corpus import stopwords
 from scipy.spatial.distance import cdist
+from scipy.special import expit
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.metrics.pairwise import paired_distances
+from sklearn.model_selection import StratifiedKFold
 import spacy
 from fuzzywuzzy import fuzz as fz
 
@@ -512,6 +515,91 @@ class LdaFeatures(luigi.Task):
         data = pd.read_pickle(data_file.path)
         features = data.apply(self.get_features, model=model, dictionary=dictionary, axis=1)
         features.to_pickle(self.output().path)
+
+
+class VowpalWabbitSplits(luigi.Task):
+    sample = luigi.Parameter()
+    n_splits = 5
+
+    def to_vw_format(self, df):
+        return (df.is_duplicate.astype(str) + ' ' + df.index.astype(str)
+                + '|first ' + df['question1'] + ' |second ' + df['question2'])
+
+    def requires(self):
+        if self.sample.endswith('train'):
+            return CSVFile(self.sample)
+        else:
+            train_path = self.sample[:-4] + 'train'
+            return [CSVFile(train_path), CSVFile(self.sample)]
+
+    def output(self):
+        splits = []
+        folds = range(1, self.n_splits + 1) if self.sample.endswith('train') else [0]
+        for fold in folds:
+            train = luigi.LocalTarget('{0}_vw_split_{1}_train.txt'.format(self.sample, fold))
+            test = luigi.LocalTarget('{0}_vw_split_{1}_test.txt'.format(self.sample, fold))
+            splits.append({'train' : train, 'test' : test})
+        return splits
+
+    def run(self):
+        if self.sample.endswith('train'):
+            sample_path = self.input().path
+            data = pd.read_csv(sample_path, index_col=0)
+            data_vw = self.to_vw_format(data)
+            cv_iter = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=0)
+            for fold, (train, test) in enumerate(cv_iter.split(data_vw, data.is_duplicate)):
+                self.output()[fold]['train'].write('\n'.join(data_vw.iloc[train]))
+                self.output()[fold]['test'].write('\n'.join(data_vw.iloc[test]))
+        else:
+            train_path, test_path = self.input()
+            train_vw = self.to_vw_format(pd.read_csv(train_path, index_col=0))
+            test_vw = self.to_vw_format(pd.read_csv(test_path, index_col=0))
+            self.output()[0]['train'].write('\n'.join(train_vw))
+            self.output()[0]['test'].write('\n'.join(test_vw))
+
+
+class VowpalWabbitFeature(luigi.Task):
+    sample = luigi.Parameter()
+    variant = luigi.Parameter()
+    vw_args_dict = {
+        'linear': ['--l1', '0.0000001', '-c', '--passes', '500', '--loss_function', 'logistic'],
+        'quad': ['-b', '23', '-l', '0.4', '--l1', '0.00000001', '--l2', '0.00000001', '-q', 'fs',
+                 '-c', '--passes', '500', '--loss_function', 'logistic'],
+        'quad_bigram': ['-b', '26', '-l', '0.4', '--l1', '0.00000001', '--l2', '0.00000001',
+                        '--ngram', '2', '-q', 'fs', '-c', '--passes', '500',
+                        '--loss_function', 'logistic']
+    }
+
+    def vw_fit_predict(self, train, test, vw_args=None):
+        if vw_args is None:
+            vw_args = []
+        temp_dir = tempfile.mkdtemp()
+        subprocess.check_call(['cp', train, os.path.join(temp_dir, 'train.txt')])
+        subprocess.check_call(['cp', test, os.path.join(temp_dir, 'test.txt')])
+        start_dir = os.cwd()
+        os.chdir(temp_dir)
+        subprocess.check_call(['vw', '-d', 'train.txt', '-f', 'model.vw'] + vw_args)
+        subprocess.check_call(['vw', '-d', 'test.txt', '-i', 'model.vw', '-p', 'test_preds.txt'])
+        vw_pred = pd.read_csv('test_preds.txt', header=None, squeeze=True)
+        os.chdir(start_dir)
+        os.rmdir(temp_dir)
+        return expit(vw_pred)
+
+    def requires(self):
+        return VowpalWabbitSplits(sample=self.sample)
+
+    def output(self):
+        postfix= '_vw_{0}'.format(self.variant)
+        return luigi.LocalTarget('{0}{1}.pkl'.format(self.sample, postfix))
+
+    def run(self):
+        vw_pred_list = []
+        for train, test in self.input():
+            vw_pred_list.append(self.vw_fit_predict(
+                train.path, test.path, vw_args=self.vw_args_dict[self.variant]))
+        vw_pred = pd.concat(vw_pred_list)
+        # TODO: check correct join order
+        vw_pred.to_pickle(self.output().path)
 
 
 class CollectFeatures(luigi.Task):
