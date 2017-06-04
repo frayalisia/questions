@@ -403,6 +403,7 @@ class Word2VecFeatures(luigi.Task):
         features = {}
         if not (s1 and s2):
             features['sim'] = np.nan
+            features['wm_dist'] = np.nan
             features['tfidf_sim'] = np.nan
             features['min_dist'] = np.nan
             features['max_dist'] = np.nan
