@@ -626,7 +626,10 @@ class CollectFeatures(luigi.Task):
             'W2V_CORPUS' : Word2VecFeatures(sample=self.sample, corpus='./nlp_models/corpus'),
             'LDA10' : LdaFeatures(sample=self.sample, corpus='./nlp_models/corpus', num_topics=10),
             'LDA100' : LdaFeatures(sample=self.sample, corpus='./nlp_models/corpus', num_topics=100),
-            'LDA500' : LdaFeatures(sample=self.sample, corpus='./nlp_models/corpus', num_topics=500, passes=10)
+            'LDA500' : LdaFeatures(sample=self.sample, corpus='./nlp_models/corpus', num_topics=500, passes=10),
+            'VW_LINEAR' : VowpalWabbitFeature(sample=self.sample, variant='linear'),
+            'VW_QUAD' : VowpalWabbitFeature(sample=self.sample, variant='quad'),
+            'VW_QUAD_BIGRAM' : VowpalWabbitFeature(sample=self.sample, variant='quad_bigram')
         }, CSVFile(name=self.sample)
 
     def output(self):
