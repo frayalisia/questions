@@ -2,6 +2,7 @@ from collections import defaultdict
 import os
 import pickle
 import re
+import subprocess
 import sys
 import tempfile
 
@@ -522,40 +523,50 @@ class VowpalWabbitSplits(luigi.Task):
     n_splits = 5
 
     def to_vw_format(self, df):
-        return (df.is_duplicate.astype(str) + ' ' + df.index.astype(str)
-                + '|first ' + df['question1'] + ' |second ' + df['question2'])
+        tag_features = (df.index.astype(str) + '|first ' + df['question1']
+                        + ' |second ' + df['question2'])
+        if 'is_duplicate' in df.columns:
+            label = df.is_duplicate.replace(0, -1).astype(str)
+            return label + ' ' + tag_features
+        else:
+            return tag_features
+
+    def write(self, target, string):
+        with target.open('w') as out:
+            out.write(string)
 
     def requires(self):
         if self.sample.endswith('train'):
-            return CSVFile(self.sample)
+            return Preprocess(sample=self.sample, lemmas=False, drop_stop_words=False)
         else:
             train_path = self.sample[:-4] + 'train'
-            return [CSVFile(train_path), CSVFile(self.sample)]
+            return [Preprocess(sample=train_path, lemmas=False, drop_stop_words=False),
+                    Preprocess(sample=self.sample, lemmas=False, drop_stop_words=False)]
 
     def output(self):
         splits = []
         folds = range(1, self.n_splits + 1) if self.sample.endswith('train') else [0]
         for fold in folds:
-            train = luigi.LocalTarget('{0}_vw_split_{1}_train.txt'.format(self.sample, fold))
-            test = luigi.LocalTarget('{0}_vw_split_{1}_test.txt'.format(self.sample, fold))
+            train = luigi.LocalTarget('{0}_vw_splits/{1}_train.txt'.format(self.sample, fold))
+            test = luigi.LocalTarget('{0}_vw_splits/{1}_test.txt'.format(self.sample, fold))
             splits.append({'train' : train, 'test' : test})
         return splits
 
     def run(self):
         if self.sample.endswith('train'):
             sample_path = self.input().path
-            data = pd.read_csv(sample_path, index_col=0)
+            data = pd.read_pickle(sample_path)
             data_vw = self.to_vw_format(data)
             cv_iter = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=0)
             for fold, (train, test) in enumerate(cv_iter.split(data_vw, data.is_duplicate)):
-                self.output()[fold]['train'].write('\n'.join(data_vw.iloc[train]))
-                self.output()[fold]['test'].write('\n'.join(data_vw.iloc[test]))
+                self.write(self.output()[fold]['train'], '\n'.join(data_vw.iloc[train]) + '\n')
+                self.write(self.output()[fold]['test'], '\n'.join(data_vw.iloc[test]) + '\n')
         else:
-            train_path, test_path = self.input()
-            train_vw = self.to_vw_format(pd.read_csv(train_path, index_col=0))
-            test_vw = self.to_vw_format(pd.read_csv(test_path, index_col=0))
-            self.output()[0]['train'].write('\n'.join(train_vw))
-            self.output()[0]['test'].write('\n'.join(test_vw))
+            train, test = self.input()
+            train_vw = self.to_vw_format(pd.read_pickle(train.path))
+            test_vw = self.to_vw_format(pd.read_pickle(test.path))
+            self.write(self.output()[0]['train'], '\n'.join(train_vw) + '\n')
+            self.write(self.output()[0]['test'], '\n'.join(test_vw) + '\n')
 
 
 class VowpalWabbitFeature(luigi.Task):
@@ -576,13 +587,13 @@ class VowpalWabbitFeature(luigi.Task):
         temp_dir = tempfile.mkdtemp()
         subprocess.check_call(['cp', train, os.path.join(temp_dir, 'train.txt')])
         subprocess.check_call(['cp', test, os.path.join(temp_dir, 'test.txt')])
-        start_dir = os.cwd()
+        start_dir = os.getcwd()
         os.chdir(temp_dir)
         subprocess.check_call(['vw', '-d', 'train.txt', '-f', 'model.vw'] + vw_args)
-        subprocess.check_call(['vw', '-d', 'test.txt', '-i', 'model.vw', '-p', 'test_preds.txt'])
-        vw_pred = pd.read_csv('test_preds.txt', header=None, squeeze=True)
+        subprocess.check_call(['vw', '-t', '-d', 'test.txt', '-i', 'model.vw', '-p', 'test_preds.txt'])
+        vw_pred = pd.read_csv('test_preds.txt', sep=' ', header=None, index_col=1, names=['pred'])
         os.chdir(start_dir)
-        os.rmdir(temp_dir)
+        subprocess.check_call(['rm', '-r', temp_dir])
         return expit(vw_pred)
 
     def requires(self):
@@ -594,9 +605,9 @@ class VowpalWabbitFeature(luigi.Task):
 
     def run(self):
         vw_pred_list = []
-        for train, test in self.input():
+        for split in self.input():
             vw_pred_list.append(self.vw_fit_predict(
-                train.path, test.path, vw_args=self.vw_args_dict[self.variant]))
+                split['train'].path, split['test'].path, vw_args=self.vw_args_dict[self.variant]))
         vw_pred = pd.concat(vw_pred_list)
         # TODO: check correct join order
         vw_pred.to_pickle(self.output().path)
